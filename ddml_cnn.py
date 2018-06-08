@@ -1,3 +1,4 @@
+import os
 import logging
 from itertools import combinations_with_replacement
 import numpy as np
@@ -7,8 +8,10 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch import tensor
 from torch.utils.data import Dataset, DataLoader
-import torchvision
-from torchvision import transforms
+# import torchvision
+# from torchvision import transforms
+from sklearn.metrics import confusion_matrix, accuracy_score
+from sklearn import svm
 
 
 class DDMLDataset(Dataset):
@@ -59,7 +62,7 @@ class DDMLNet(nn.Module):
         self.fc3 = nn.Linear(784, 392)
         self.fc4 = nn.Linear(392, 10)
 
-        self.ddml_layers = [self.fc1, self.fc2]
+        self.ddml_layers = [self.fc1, self.fc2, self.fc3]
 
         self._s = F.tanh
 
@@ -84,11 +87,12 @@ class DDMLNet(nn.Module):
         x = self.cnn_forward(x)
         x = self._s(self.fc1(x))
         x = self._s(self.fc2(x))
+        x = self._s(self.fc3(x))
         return x
 
     def forward(self, x):
         x = self.ddml_forward(x)
-        x = self.fc3(x)
+        x = self.fc4(x)
         return x
 
     def compute_distance(self, x1, x2):
@@ -250,50 +254,44 @@ def setup_logger(level=logging.DEBUG):
     return logger
 
 
-def train(net, dataloader, epoch_number=2):
+def train(net, dataloader, criterion, optimizer):
     logger = logging.getLogger(__name__)
 
-    average_number = 100
+    statistics_batch = 100
 
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
+    cnn_loss = 0.0
+    ddml_loss = 0.0
+    for i, (inputs, labels) in enumerate(dataloader):
+        inputs, labels = inputs.to(net.device), labels.to(net.device)
+        pairs = list(combinations_with_replacement(zip(inputs, labels), 2))
 
-    for epoch in range(epoch_number):
-        cnn_loss = 0.0
-        ddml_loss = 0.0
-        for i, (inputs, labels) in enumerate(dataloader):
-            inputs, labels = inputs.to(net.device), labels.to(net.device)
-            pairs = list(combinations_with_replacement(zip(inputs, labels), 2))
+        ################
+        # cnn backward #
+        ################
+        # zero the parameter gradients
+        optimizer.zero_grad()
 
-            ################
-            # cnn backward #
-            ################
-            # zero the parameter gradients
-            optimizer.zero_grad()
+        # forward + backward + optimize
+        outputs = net(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        cnn_loss += loss.item()
 
-            # forward + backward + optimize
-            outputs = net(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+        #################
+        # ddml backward #
+        #################
+        ddml_loss += net.ddml_optimize(pairs)
 
-            #################
-            # ddml backward #
-            #################
-            ddml_loss += net.ddml_optimize(pairs)
-
-            # print statistics
-            cnn_loss += loss.item()
-            if (i + 1) % average_number == 0:
-                logger.debug('(%d, %5d) cnn loss: %.3f, ddml loss: %.3f', epoch + 1, i + 1, cnn_loss / average_number, ddml_loss / average_number)
-                cnn_loss = 0.0
-                ddml_loss = 0.0
-
-    logger.info('Finished Training')
+        # print statistics
+        if (i + 1) % statistics_batch == 0:
+            logger.debug('%5d: cnn loss: %.3f, ddml loss: %.3f', i + 1, cnn_loss / statistics_batch, ddml_loss / statistics_batch)
+            cnn_loss = 0.0
+            ddml_loss = 0.0
 
 
 def test(net, dataloader):
-    currcet = 0
+    correct = 0
 
     for inputs, labels in dataloader:
         inputs, labels = inputs.to(net.device), labels.to(net.device)
@@ -301,9 +299,41 @@ def test(net, dataloader):
         value, result = torch.max(outputs, dim=1)
 
         if result == labels:
-            currcet += 1
+            correct += 1
 
-    return currcet / len(dataloader)
+    return correct / len(dataloader)
+
+
+def svm_test(net, dataloader, split_index=5000):
+    svc = svm.SVC(kernel='linear', C=32, gamma=0.1)
+
+    svm_x = []
+    svm_y = []
+
+    for x, y in dataloader:
+        x, y = x.to(net.device), y.to(net.device)
+        x = net.ddml_forward(x)
+        x = x.to(torch.device('cpu'))
+        svm_x.append(x.squeeze().detach().numpy())
+        svm_y.append(int(y))
+
+    svm_x = np.array(svm_x)
+    svm_y = np.array(svm_y)
+
+    train_x = svm_x[:split_index]
+    train_y = svm_y[:split_index]
+
+    test_x = svm_x[split_index:]
+    test_y = svm_y[split_index:]
+
+    svc.fit(train_x, train_y)
+
+    predictions = svc.predict(test_x)
+
+    accuracy = accuracy_score(test_y, predictions)
+    cm = confusion_matrix(test_y, predictions, (0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
+
+    return accuracy, cm
 
 
 if __name__ == '__main__':
@@ -311,6 +341,10 @@ if __name__ == '__main__':
 
     TRAIN_BATCH_SIZE = 10
     TRAIN_EPOCH_NUMBER = 10
+    TRAIN_TEST_SPLIT_INDEX = 5000
+    TEST_SAMPLE_COUNT = 10000
+
+    PKL_PATH = "pkl/ddml_cnn.pkl"
 
     DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     # DEVICE = torch.device("cpu")
@@ -332,15 +366,32 @@ if __name__ == '__main__':
     DATASET = np.loadtxt('data/fashion-mnist_train.csv', delimiter=',')
     LOGGER.debug("Dataset shape: %s", DATASET.shape)
 
-    trainset = DDMLDataset(DATASET[:5000])
+    trainset = DDMLDataset(DATASET[:TRAIN_TEST_SPLIT_INDEX])
     trainloader = DataLoader(dataset=trainset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, num_workers=4)
 
-    testset = DDMLDataset(DATASET[5000:])
-    testloader = DataLoader(dataset=testset, batch_size=1, shuffle=False, num_workers=4)
+    testset = DDMLDataset(DATASET[TRAIN_TEST_SPLIT_INDEX:(TRAIN_TEST_SPLIT_INDEX + TEST_SAMPLE_COUNT)])
+    testloader = DataLoader(dataset=testset, batch_size=1, shuffle=True, num_workers=4)
+
+    svm_dataset = DDMLDataset(DATASET[:(TRAIN_TEST_SPLIT_INDEX + TEST_SAMPLE_COUNT)])
+    svmloader = DataLoader(dataset=svm_dataset, batch_size=1, shuffle=True, num_workers=4)
 
     cnnnet = DDMLNet(device=DEVICE, beta=1.0, tao=10.0, b=1.0, learning_rate=0.001)
 
-    train(cnnnet, trainloader, epoch_number=TRAIN_EPOCH_NUMBER)
-    accuracy = test(cnnnet, testloader)
+    cross_entropy = nn.CrossEntropyLoss()
+    sgd = optim.SGD(cnnnet.parameters(), lr=0.001, momentum=0.9)
 
-    LOGGER.info("Accuracy: %6f", accuracy)
+    if os.path.exists(PKL_PATH):
+        state_dict = torch.load(PKL_PATH)
+        cnnnet.load_state_dict(state_dict)
+        LOGGER.info("Load state from file %s.", PKL_PATH)
+
+    for epoch in range(TRAIN_EPOCH_NUMBER):
+        train(cnnnet, trainloader, criterion=cross_entropy, optimizer=sgd)
+        torch.save(cnnnet.state_dict(), PKL_PATH)
+
+        nn_accuracy = test(cnnnet, testloader)
+        svm_accuracy, svm_cm = svm_test(cnnnet, svmloader, TRAIN_TEST_SPLIT_INDEX)
+
+        LOGGER.info("Accuracy: %6f", nn_accuracy)
+        LOGGER.info("SVM Accuracy: %6f", svm_accuracy)
+        LOGGER.info("Confusion Matrix: \n%s", svm_cm)
