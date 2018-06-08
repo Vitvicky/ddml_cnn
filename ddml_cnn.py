@@ -7,8 +7,8 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch import tensor
 from torch.utils.data import Dataset, DataLoader
-# import torchvision
-# from torchvision import transforms
+import torchvision
+from torchvision import transforms
 
 
 class DDMLDataset(Dataset):
@@ -55,8 +55,9 @@ class DDMLNet(nn.Module):
         )
         # [batch_size, 16, 7, 7]
         self.fc1 = nn.Linear(16 * 7 * 7, 1568)
-        self.fc2 = nn.Linear(1568, 392)
-        self.fc3 = nn.Linear(392, 10)
+        self.fc2 = nn.Linear(1568, 784)
+        self.fc3 = nn.Linear(784, 392)
+        self.fc4 = nn.Linear(392, 10)
 
         self.ddml_layers = [self.fc1, self.fc2]
 
@@ -284,7 +285,7 @@ def train(net, dataloader, epoch_number=2):
             # print statistics
             cnn_loss += loss.item()
             if (i + 1) % average_number == 0:
-                logger.debug('(%d, %5d) cnn loss: %.3f, ddml loss: %.3f', epoch, i + 1, cnn_loss / average_number, ddml_loss / average_number)
+                logger.debug('(%d, %5d) cnn loss: %.3f, ddml loss: %.3f', epoch + 1, i + 1, cnn_loss / average_number, ddml_loss / average_number)
                 cnn_loss = 0.0
                 ddml_loss = 0.0
 
@@ -308,30 +309,38 @@ def test(net, dataloader):
 if __name__ == '__main__':
     LOGGER = setup_logger(level=logging.DEBUG)
 
-    train_batch_size = 10
+    TRAIN_BATCH_SIZE = 10
+    TRAIN_EPOCH_NUMBER = 10
 
     DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     # DEVICE = torch.device("cpu")
 
+    #######################
+    # torchvision dataset #
+    #######################
     # transform = transforms.Compose([transforms.ToTensor()])
     #
     # trainset = torchvision.datasets.FashionMNIST(root="data/fashion-mnist", train=True, transform=transform, download=False)
-    # trainloader = torch.utils.data.DataLoader(trainset, batch_size=4, shuffle=True, num_workers=2)
+    # trainloader = torch.utils.data.DataLoader(trainset, batch_size=10, shuffle=True, num_workers=4)
+    #
     # testset = torchvision.datasets.FashionMNIST(root="data/fashion-mnist", train=False, transform=transform, download=False)
-    # testloader = torch.utils.data.DataLoader(testset, batch_size=1, num_workers=2)
+    # testloader = torch.utils.data.DataLoader(testset, batch_size=1, num_workers=4)
 
-    dataset = np.loadtxt('data/fashion-mnist_train.csv', delimiter=',')
-    LOGGER.debug("Dataset shape: %s", dataset.shape)
+    ###############
+    # csv dataset #
+    ###############
+    DATASET = np.loadtxt('data/fashion-mnist_train.csv', delimiter=',')
+    LOGGER.debug("Dataset shape: %s", DATASET.shape)
 
-    trainset = DDMLDataset(dataset[:5000])
-    testset = DDMLDataset(dataset[5000:])
+    trainset = DDMLDataset(DATASET[:5000])
+    trainloader = DataLoader(dataset=trainset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, num_workers=4)
 
-    trainloader = DataLoader(dataset=trainset, batch_size=train_batch_size, shuffle=True, num_workers=0)
-    testloader = DataLoader(dataset=testset, batch_size=1, shuffle=False, num_workers=0)
+    testset = DDMLDataset(DATASET[5000:])
+    testloader = DataLoader(dataset=testset, batch_size=1, shuffle=False, num_workers=4)
 
-    cnnnet = DDMLNet(device=DEVICE, beta=1.0, tao=20.0, b=2.0, learning_rate=0.001)
+    cnnnet = DDMLNet(device=DEVICE, beta=1.0, tao=10.0, b=1.0, learning_rate=0.001)
 
-    train(cnnnet, trainloader, epoch_number=4)
+    train(cnnnet, trainloader, epoch_number=TRAIN_EPOCH_NUMBER)
     accuracy = test(cnnnet, testloader)
 
     LOGGER.info("Accuracy: %6f", accuracy)
