@@ -7,8 +7,8 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch import tensor
 from torch.utils.data import Dataset, DataLoader
-import torchvision
-from torchvision import transforms
+# import torchvision
+# from torchvision import transforms
 
 
 class DDMLDataset(Dataset):
@@ -16,18 +16,17 @@ class DDMLDataset(Dataset):
     Implement a Dataset.
     """
 
-    def __init__(self, dataset, device):
+    def __init__(self, dataset):
         """
 
         :param dataset: numpy.ndarray
-        :param device: torch.device
         """
 
         self.data = []
 
         for s in dataset:
-            x = (tensor(s[:-1], dtype=torch.float, device=device) / 255).view(-1, 28, 28)
-            y = tensor(s[-1], dtype=torch.long, device=device)
+            x = (tensor(s[:-1], dtype=torch.float) / 255).view(-1, 28, 28)
+            y = tensor(s[-1], dtype=torch.long)
             self.data.append((x, y))
 
     def __getitem__(self, index):
@@ -38,7 +37,7 @@ class DDMLDataset(Dataset):
 
 
 class DDMLNet(nn.Module):
-    def __init__(self, beta=1.0, tao=5.0, b=1.0, learning_rate=0.001):
+    def __init__(self, device, beta=1.0, tao=5.0, b=1.0, learning_rate=0.001):
         super(DDMLNet, self).__init__()
         self.conv1 = nn.Sequential(
             # [batch_size, 1, 28, 28]
@@ -55,13 +54,15 @@ class DDMLNet(nn.Module):
             nn.MaxPool2d(2, 2)
         )
         # [batch_size, 16, 7, 7]
-        self.fc1 = nn.Linear(16 * 7 * 7, 120)
-        self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, 10)
+        self.fc1 = nn.Linear(16 * 7 * 7, 1568)
+        self.fc2 = nn.Linear(1568, 392)
+        self.fc3 = nn.Linear(392, 10)
 
         self.ddml_layers = [self.fc1, self.fc2]
 
         self._s = F.tanh
+
+        self.device = device
 
         self.beta = beta
         self.tao = tao
@@ -69,6 +70,8 @@ class DDMLNet(nn.Module):
         self.learning_rate = learning_rate
 
         self.logger = logging.getLogger(__name__)
+
+        self.to(device)
 
     def cnn_forward(self, x):
         x = self.conv1(x)
@@ -258,7 +261,7 @@ def train(net, dataloader, epoch_number=2):
         cnn_loss = 0.0
         ddml_loss = 0.0
         for i, (inputs, labels) in enumerate(dataloader):
-            # inputs, labels = inputs.to(device), labels.to(device)
+            inputs, labels = inputs.to(net.device), labels.to(net.device)
             pairs = list(combinations_with_replacement(zip(inputs, labels), 2))
 
             ################
@@ -292,7 +295,7 @@ def test(net, dataloader):
     currcet = 0
 
     for inputs, labels in dataloader:
-        # inputs, labels = inputs.to(device), labels.to(device)
+        inputs, labels = inputs.to(net.device), labels.to(net.device)
         outputs = net(inputs)
         value, result = torch.max(outputs, dim=1)
 
@@ -303,12 +306,12 @@ def test(net, dataloader):
 
 
 if __name__ == '__main__':
-    logger = setup_logger(level=logging.DEBUG)
+    LOGGER = setup_logger(level=logging.DEBUG)
 
     train_batch_size = 10
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    # device = torch.device("cpu")
+    DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # DEVICE = torch.device("cpu")
 
     # transform = transforms.Compose([transforms.ToTensor()])
     #
@@ -318,19 +321,17 @@ if __name__ == '__main__':
     # testloader = torch.utils.data.DataLoader(testset, batch_size=1, num_workers=2)
 
     dataset = np.loadtxt('data/fashion-mnist_train.csv', delimiter=',')
-    logger.debug("Dataset shape: %s", dataset.shape)
+    LOGGER.debug("Dataset shape: %s", dataset.shape)
 
-    trainset = DDMLDataset(dataset[:5000], device)
-    testset = DDMLDataset(dataset[5000:], device)
+    trainset = DDMLDataset(dataset[:5000])
+    testset = DDMLDataset(dataset[5000:])
 
     trainloader = DataLoader(dataset=trainset, batch_size=train_batch_size, shuffle=True, num_workers=0)
     testloader = DataLoader(dataset=testset, batch_size=1, shuffle=False, num_workers=0)
 
-    cnnnet = DDMLNet(beta=1.0, tao=20.0, b=2.0, learning_rate=0.001)
-
-    cnnnet.to(device)
+    cnnnet = DDMLNet(device=DEVICE, beta=1.0, tao=20.0, b=2.0, learning_rate=0.001)
 
     train(cnnnet, trainloader, epoch_number=4)
     accuracy = test(cnnnet, testloader)
 
-    logger.info("Accuracy: %6f", accuracy)
+    LOGGER.info("Accuracy: %6f", accuracy)
