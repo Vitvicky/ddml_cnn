@@ -44,25 +44,28 @@ class DDMLNet(nn.Module):
         super(DDMLNet, self).__init__()
         self.conv1 = nn.Sequential(
             # [batch_size, 1, 28, 28]
-            nn.Conv2d(in_channels=1, out_channels=6, kernel_size=5, padding=2),
+            nn.Conv2d(in_channels=1, out_channels=10, kernel_size=5, padding=2),
             nn.ReLU(),
-            # [batch_size, 6, 28, 28]
+            # [batch_size, 10, 28, 28]
             nn.MaxPool2d(2, 2)
         )
         self.conv2 = nn.Sequential(
-            # [batch_size, 6, 14, 14]
-            nn.Conv2d(in_channels=6, out_channels=16, kernel_size=5, padding=2),
+            # [batch_size, 10, 14, 14]
+            nn.Conv2d(in_channels=10, out_channels=20, kernel_size=5, padding=2),
             nn.ReLU(),
-            # [batch_size, 16, 14, 14]
+            # [batch_size, 20, 14, 14]
             nn.MaxPool2d(2, 2)
         )
-        # [batch_size, 16, 7, 7]
-        self.fc1 = nn.Linear(16 * 7 * 7, 1568)
-        self.fc2 = nn.Linear(1568, 784)
-        self.fc3 = nn.Linear(784, 392)
-        self.fc4 = nn.Linear(392, 10)
 
-        self.ddml_layers = [self.fc1, self.fc2, self.fc3]
+        self.cnn_output_dim = 20 * 7 * 7
+
+        # [batch_size, 20, 7, 7]
+        self.fc1 = nn.Linear(self.cnn_output_dim, 392)
+        self.fc2 = nn.Linear(392, 196)
+        self.fc3 = nn.Linear(196, 98)
+        self.fc4 = nn.Linear(98, 10)
+
+        self.ddml_layers = [self.fc1, self.fc2, self.fc3, self.fc4]
 
         self._s = F.tanh
 
@@ -80,18 +83,14 @@ class DDMLNet(nn.Module):
     def cnn_forward(self, x):
         x = self.conv1(x)
         x = self.conv2(x)
-        x = x.view(-1, 16 * 7 * 7)
+        x = x.view(-1, self.cnn_output_dim)
         return x
 
-    def ddml_forward(self, x):
+    def forward(self, x):
         x = self.cnn_forward(x)
         x = self._s(self.fc1(x))
         x = self._s(self.fc2(x))
         x = self._s(self.fc3(x))
-        return x
-
-    def forward(self, x):
-        x = self.ddml_forward(x)
         x = self.fc4(x)
         return x
 
@@ -103,7 +102,7 @@ class DDMLNet(nn.Module):
         :param x2: Tensor
         :return: The distance of the two sample.
         """
-        return (self.ddml_forward(x1) - self.ddml_forward(x2)).data.norm() ** 2
+        return (self.forward(x1) - self.forward(x2)).data.norm() ** 2
 
     def ddml_optimize(self, pairs):
         """
@@ -312,7 +311,7 @@ def svm_test(net, dataloader, split_index=5000):
 
     for x, y in dataloader:
         x, y = x.to(net.device), y.to(net.device)
-        x = net.ddml_forward(x)
+        x = net.forward(x)
         x = x.to(torch.device('cpu'))
         svm_x.append(x.squeeze().detach().numpy())
         svm_y.append(int(y))
@@ -340,7 +339,7 @@ if __name__ == '__main__':
     LOGGER = setup_logger(level=logging.DEBUG)
 
     TRAIN_BATCH_SIZE = 10
-    TRAIN_EPOCH_NUMBER = 10
+    TRAIN_EPOCH_NUMBER = 100
     TRAIN_TEST_SPLIT_INDEX = 5000
     TEST_SAMPLE_COUNT = 10000
 
@@ -387,10 +386,11 @@ if __name__ == '__main__':
 
     for epoch in range(TRAIN_EPOCH_NUMBER):
         train(cnnnet, trainloader, criterion=cross_entropy, optimizer=sgd)
-        torch.save(cnnnet.state_dict(), PKL_PATH)
 
         nn_accuracy = test(cnnnet, testloader)
         svm_accuracy, svm_cm = svm_test(cnnnet, svmloader, TRAIN_TEST_SPLIT_INDEX)
+
+        torch.save(cnnnet.state_dict(), 'pkl/ddml-({:.4f}).pkl'.format(svm_accuracy))
 
         LOGGER.info("Accuracy: %6f", nn_accuracy)
         LOGGER.info("SVM Accuracy: %6f", svm_accuracy)
