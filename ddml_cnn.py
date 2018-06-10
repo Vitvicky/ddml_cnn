@@ -309,7 +309,7 @@ def train(net, dataloader, criterion, optimizer):
 
         # print statistics
         if (i + 1) % statistics_batch == 0:
-            logger.debug('%5d: cnn loss: %.3f, ddml loss: %.3f', i + 1, cnn_loss / statistics_batch, ddml_loss / statistics_batch)
+            logger.debug('%5d: cnn loss: %.4f, ddml loss: %.4f', i + 1, cnn_loss / statistics_batch, ddml_loss / statistics_batch)
             cnn_loss = 0.0
             ddml_loss = 0.0
 
@@ -368,7 +368,10 @@ if __name__ == '__main__':
     TRAIN_TEST_SPLIT_INDEX = 5000
     TEST_SAMPLE_COUNT = 10000
 
-    PKL_PATH = "pkl/ddml_cnn.pkl"
+    FashionMNIST_PKL = "pkl/fashion_mnist.pkl"
+    CIFAR10_PKL = "pkl/cifar10.pkl"
+
+    PKL_PATH = CIFAR10_PKL
 
     DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     # DEVICE = torch.device("cpu")
