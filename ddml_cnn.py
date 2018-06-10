@@ -28,7 +28,8 @@ class DDMLDataset(Dataset):
         self.data = []
 
         for s in dataset:
-            x = (tensor(s[:-1], dtype=torch.float) / 255).view(-1, 28, 28)
+            # x = (tensor(s[:-1], dtype=torch.float) / 255).view(-1, 28, 28)
+            x = (tensor(s[:-1], dtype=torch.float) / 255).view(-1, 32, 32)
             y = tensor(s[-1], dtype=torch.long)
             self.data.append((x, y))
 
@@ -42,28 +43,52 @@ class DDMLDataset(Dataset):
 class DDMLNet(nn.Module):
     def __init__(self, device, beta=1.0, tao=5.0, b=1.0, learning_rate=0.001):
         super(DDMLNet, self).__init__()
+
+        # self.conv1 = nn.Sequential(
+        #     # [batch_size, 1, 28, 28]
+        #     nn.Conv2d(in_channels=1, out_channels=10, kernel_size=5, padding=2),
+        #     nn.ReLU(),
+        #     # [batch_size, 10, 28, 28]
+        #     nn.MaxPool2d(2, 2)
+        # )
+        # self.conv2 = nn.Sequential(
+        #     # [batch_size, 10, 14, 14]
+        #     nn.Conv2d(in_channels=10, out_channels=20, kernel_size=5, padding=2),
+        #     nn.ReLU(),
+        #     # [batch_size, 20, 14, 14]
+        #     nn.MaxPool2d(2, 2)
+        # )
+        #
+        # self.cnn_output_dim = 20 * 7 * 7
+        #
+        # # [batch_size, 20, 7, 7]
+        # self.fc1 = nn.Linear(self.cnn_output_dim, 392)
+        # self.fc2 = nn.Linear(392, 196)
+        # self.fc3 = nn.Linear(196, 98)
+        # self.fc4 = nn.Linear(98, 10)
+
         self.conv1 = nn.Sequential(
-            # [batch_size, 1, 28, 28]
-            nn.Conv2d(in_channels=1, out_channels=10, kernel_size=5, padding=2),
+            # [batch_size, in_channels, 32, 32]
+            nn.Conv2d(in_channels=3, out_channels=15, kernel_size=5, padding=2),
             nn.ReLU(),
-            # [batch_size, 10, 28, 28]
+            # [batch_size, out_channels, 32, 32]
             nn.MaxPool2d(2, 2)
         )
         self.conv2 = nn.Sequential(
-            # [batch_size, 10, 14, 14]
-            nn.Conv2d(in_channels=10, out_channels=20, kernel_size=5, padding=2),
+            # [batch_size, in_channels, 16, 16]
+            nn.Conv2d(in_channels=15, out_channels=60, kernel_size=5, padding=2),
             nn.ReLU(),
-            # [batch_size, 20, 14, 14]
+            # [batch_size, out_channels, 16, 16]
             nn.MaxPool2d(2, 2)
         )
 
-        self.cnn_output_dim = 20 * 7 * 7
+        self.cnn_output_dim = 60 * 8 * 8
 
-        # [batch_size, 20, 7, 7]
-        self.fc1 = nn.Linear(self.cnn_output_dim, 392)
-        self.fc2 = nn.Linear(392, 196)
-        self.fc3 = nn.Linear(196, 98)
-        self.fc4 = nn.Linear(98, 10)
+        # [batch_size, 60, 8, 8]
+        self.fc1 = nn.Linear(self.cnn_output_dim, 1920)
+        self.fc2 = nn.Linear(1920, 960)
+        self.fc3 = nn.Linear(960, 240)
+        self.fc4 = nn.Linear(240, 10)
 
         self.ddml_layers = [self.fc1, self.fc2, self.fc3, self.fc4]
 
@@ -362,7 +387,8 @@ if __name__ == '__main__':
     ###############
     # csv dataset #
     ###############
-    DATASET = np.loadtxt('data/fashion-mnist_train.csv', delimiter=',')
+    # DATASET = np.loadtxt('data/fashion-mnist_train.csv', delimiter=',')
+    DATASET = np.loadtxt('data/cifar10_train.csv', delimiter=',')
     LOGGER.debug("Dataset shape: %s", DATASET.shape)
 
     trainset = DDMLDataset(DATASET[:TRAIN_TEST_SPLIT_INDEX])
